@@ -65,9 +65,9 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
     int i;
 
     if (user_mode(regs))
-        nr_entries = save_stack_trace_user(entries, MAX_STACK_TRACE);
+        nr_entries = stack_trace_save_user(entries, MAX_STACK_TRACE);
     else
-        nr_entries = save_stack_trace(entries, MAX_STACK_TRACE, 0 );
+        nr_entries = stack_trace_save(entries, MAX_STACK_TRACE, 0 );
 
     for (i = 0; i < nr_entries; i++)
         hash_key ^= entries[i];
