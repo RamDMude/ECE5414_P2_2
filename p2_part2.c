@@ -192,16 +192,17 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
 static struct task_struct *prev_task = NULL;
 static u64 prev_timestamp = 0;
 
-static struct sched_rbentry *rbtree_lookup(u64 exec_time) {
+static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
+    
     struct rb_node *node = sched_rbtree.rb_node;
-    while (node) {
+
+    while (node){
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        if (exec_time < entry->exec_time)
-            node = node->rb_left;
-        else if (exec_time > entry->exec_time)
-            node = node->rb_right;
-        else
+        if (entry->nr_entries == nr_entries &&
+            !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))) {
             return entry;
+        }
+        node = rb_next(node);
     }
     return NULL;
 }
@@ -246,15 +247,16 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
 
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
-        struct sched_rbentry *old_entry = rbtree_lookup(elapsed);
-        if (old_entry)
-            rbtree_remove(old_entry);
-        
         struct sched_rbentry *new_entry = kmalloc(sizeof(*new_entry), GFP_KERNEL);
         if (!new_entry)
             return;
-        
-        new_entry->exec_time += elapsed;
+
+        struct sched_rbentry *old_entry = rbtree_lookup(nr_entries, entries);
+        if (old_entry){
+            new_entry->exec_time = old_entry->exec_time + elapsed;    
+            rbtree_remove(old_entry);
+        }
+        new_entry->exec_time = elapsed;
         new_entry->stack_hash = stack_hash;
         memcpy(new_entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
         new_entry->nr_entries = nr_entries;
