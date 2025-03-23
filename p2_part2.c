@@ -10,6 +10,8 @@
 #include <linux/kprobes.h>
 #include <linux/stacktrace.h>
 
+#include "p2_part2.h"
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ram Mude");
 MODULE_DESCRIPTION("LKP25 P2");
@@ -26,20 +28,24 @@ extern unsigned int stack_trace_save_user(unsigned long *store, unsigned int siz
 static DEFINE_HASHTABLE(sched_htable, MY_HASH_TABLE_BINS);
 
 /* Hashtable entry struct */
+#if (P2_PART2 == 1)
 struct sched_hentry {
     unsigned long stack_entries[MAX_STACK_TRACE];
     unsigned int nr_entries;
     int count;
     struct hlist_node hash;
 };
+
+#elif (P2_PART2 == 2)
+struct sched_hentry {
+    unsigned long stack_entries[MAX_STACK_TRACE];
+    unsigned int nr_entries;
+    u64 total_exec_time;
+    struct hlist_node hash;
+};
+
+#endif
 /* HASH TABLE END */
-
-// static char symbol[KSYM_NAME_LEN] = "lkp25_p2_proc_open";
-// module_param_string(symbol, symbol, KSYM_NAME_LEN, 0644);
-
-// static struct kprobe kp = {
-// 	.symbol_name	= symbol,
-// };
 
 static char symbol2[KSYM_NAME_LEN] = "pick_next_task_fair";
 module_param_string(symbol2, symbol2, KSYM_NAME_LEN, 0644);
@@ -48,17 +54,10 @@ static struct kprobe kp2 = {
 	.symbol_name	= symbol2,
 };
 
-// int cat_counter = 0;
-
-// /* kprobe post_handler: called after the probed instruction is executed */
-// static void __kprobes handler_post(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
-// {
-// 	cat_counter++;
-// }
-
-
+#if (P2_PART2 == 1)
 static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
 {
+
     unsigned long entries[MAX_STACK_TRACE];
 	unsigned int nr_entries;
     struct sched_hentry *entry;
@@ -93,18 +92,6 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
 	return;
 }
 
-static void cleanup_sched_htable(void) {
-    struct sched_hentry *entry;
-    struct hlist_node *tmp;
-    int bkt;
-
-    hash_for_each_safe(sched_htable, bkt, tmp, entry, hash) {
-        hash_del(&entry->hash);
-        kfree(entry);
-    }
-
-}
-
 static int lkp25_p2_proc_show(struct seq_file *m, void *v)
 {
 	struct sched_hentry *entry;
@@ -118,6 +105,87 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
         seq_printf(m, "Count: %d\n\n", entry->count);
     }
     return 0;
+}
+
+#elif (P2_PART2 == 2)
+static struct task_struct *prev_task = NULL;
+static u64 prev_timestamp = 0;
+
+static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
+{
+    struct task_struct *curr = (struct task_struct *)regs->si;
+    if (!curr) return;
+
+    unsigned long entries[MAX_STACK_TRACE];
+	unsigned int nr_entries;
+    struct sched_hentry *entry;
+    struct hlist_node *tmp;
+    unsigned long hash_key = 0;
+    int i;
+
+    u64 now = ktime_get_ns();
+    if (prev_task && prev_timestamp){
+        u64 elapsed = now - prev_timestamp;
+    
+        if (user_mode(regs))
+            nr_entries = stack_trace_save_user(entries, MAX_STACK_TRACE);
+        else
+            nr_entries = stack_trace_save(entries, MAX_STACK_TRACE, 0 );
+
+        for (i = 0; i < nr_entries; i++)
+            hash_key ^= entries[i];
+
+        hash_for_each_possible_safe(sched_htable, entry, tmp, hash, hash_key) {
+            if (entry->nr_entries == nr_entries &&
+                !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))) {
+                entry->total_exec_time += elapsed;
+                goto update_prev;
+            }
+        }
+
+        entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+        if (!entry)
+            return;
+
+        memcpy(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
+        entry->nr_entries = nr_entries;
+        entry->total_exec_time = elapsed;
+        hash_add(sched_htable, &entry->hash, hash_key);
+    }
+update_prev:
+    prev_task = curr;
+    prev_timestamp = now;
+	return;
+}
+
+static int lkp25_p2_proc_show(struct seq_file *m, void *v)
+{
+	struct sched_hentry *entry;
+    int bkt, i;
+
+    seq_printf(m, "Stack Trace\tCumulative CPU Time (ns)\n");
+    
+    hash_for_each(sched_htable, bkt, entry, hash) {
+        for (i = 0; i < entry->nr_entries; i++){
+            seq_printf(m, "%pS\n", (void *)entry->stack_entries[i]);
+        }
+        seq_printf(m, "Total Time: %llu ns\n\n", entry->total_exec_time);
+    }
+    return 0;
+}
+
+#endif
+
+static void cleanup_sched_htable(void) {
+    struct sched_hentry *entry;
+    struct hlist_node *tmp;
+    int bkt;
+
+    hash_for_each_safe(sched_htable, bkt, tmp, entry, hash) {
+        hash_del(&entry->hash);
+        kfree(entry);
+    }
+
 }
 
 static int lkp25_p2_proc_open(struct inode *inode, struct file *file)
@@ -141,15 +209,6 @@ static int __init lkp25_p2_init(void)
 	/* Create our /proc/perftop file */
 	proc_create("perftop", 0, NULL, &lkp25_p2_proc_fops); 
 
-	// kp.post_handler = handler_post;
-
-	// ret = register_kprobe(&kp);
-	// if (ret < 0) {
-	// 	pr_err("register_kprobe failed, returned %d\n", ret);
-	// 	return ret;
-	// }
-	// printk(KERN_INFO "Planted cat kprobe at %p\n", kp.addr);
-
 
 	kp2.post_handler = handler_post2;
 
@@ -166,8 +225,6 @@ static int __init lkp25_p2_init(void)
 static void __exit lkp25_p2_exit(void)
 {
 	/* Remove the /proc/perftop entry */
-	// unregister_kprobe(&kp);
-	// printk(KERN_INFO "Cat kprobe at %p unregistered\n", kp.addr);
 	unregister_kprobe(&kp2);
 	printk(KERN_INFO "Scheduler kprobe at %p unregistered\n", kp2.addr);
 	cleanup_sched_htable();
