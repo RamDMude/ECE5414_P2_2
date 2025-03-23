@@ -14,6 +14,8 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ram Mude");
 MODULE_DESCRIPTION("LKP25 P2");
 
+extern unsigned int stack_trace_save_user(unsigned long *store, unsigned int size);
+
 /* HASH TABLE BEGIN */
 
 /*
