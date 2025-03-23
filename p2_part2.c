@@ -218,11 +218,13 @@ static void rbtree_insert(struct sched_rbentry *new_entry) {
     }
     rb_link_node(&new_entry->node, parent, link);
     rb_insert_color(&new_entry->node, &sched_rbtree);
+    return;
 }
 
 static void rbtree_remove(struct sched_rbentry *entry) {
     rb_erase(&entry->node, &sched_rbtree);
     kfree(entry);
+    return;
 }
 
 static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
@@ -244,7 +246,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
 
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
-        struct sched_rbentry *old_entry = rbtree_lookup(prev_task->se.sum_exec_runtime);
+        struct sched_rbentry *old_entry = rbtree_lookup(elapsed);
         if (old_entry)
             rbtree_remove(old_entry);
         
@@ -252,7 +254,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         if (!new_entry)
             return;
         
-        new_entry->exec_time = prev_task->se.sum_exec_runtime + elapsed;
+        new_entry->exec_time += elapsed;
         new_entry->stack_hash = stack_hash;
         memcpy(new_entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
         new_entry->nr_entries = nr_entries;
