@@ -41,6 +41,7 @@ struct sched_hentry {
     unsigned long stack_entries[MAX_STACK_TRACE];
     unsigned int nr_entries;
     u64 total_exec_time;
+    u64 actual_exec;
     struct hlist_node hash;
 };
 
@@ -139,6 +140,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
             if (entry->nr_entries == nr_entries &&
                 !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))) {
                 entry->total_exec_time += elapsed;
+                entry->actual_exec = curr->se.sum_exec_runtime;
                 goto update_prev;
             }
         }
@@ -150,6 +152,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         memcpy(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
         entry->nr_entries = nr_entries;
         entry->total_exec_time = elapsed;
+        entry->actual_exec = curr->se.sum_exec_runtime;
         hash_add(sched_htable, &entry->hash, hash_key);
     }
 update_prev:
@@ -170,6 +173,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
             seq_printf(m, "%pS\n", (void *)entry->stack_entries[i]);
         }
         seq_printf(m, "Total Time: %llu ns\n\n", entry->total_exec_time);
+        seq_printf(m, "Actual Time: %llu ns\n\n", entry->actual_exec);
     }
     return 0;
 }
