@@ -54,6 +54,7 @@ static DEFINE_SPINLOCK(sched_rbtree_lock);
 
 struct sched_rbentry {
     struct rb_node node;
+    pid_t pid;
     u64 exec_time;
     u32 stack_hash;
     unsigned long stack_entries[MAX_STACK_TRACE];
@@ -194,7 +195,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
 static struct task_struct *prev_task = NULL;
 static u64 prev_timestamp = 0;
 
-static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
+static struct sched_rbentry *rbtree_lookup(pid_t pid) {
     struct rb_node *node = sched_rbtree.rb_node;
 
     // while (node) {
@@ -215,7 +216,7 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
 
     for (node = rb_first(&sched_rbtree); node; node= rb_next(node)){
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        if (entry->nr_entries == nr_entries && !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))){
+        if (entry->pid == pid){
             return entry;
         }
     }
@@ -223,13 +224,14 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
     return NULL;
 }
 
-static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, u64 exec_time, u32 stack_hash) {
+static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, u64 exec_time, u32 stack_hash, pid_t pid) {
     struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
     struct sched_rbentry *new_node = kmalloc(sizeof(struct sched_rbentry ), GFP_KERNEL);
 
     if (!new_node){
         return;
     }
+    new_node -> pid = pid;
     new_node -> nr_entries = nr_entries;
     memcpy(new_node->stack_entries, entries, nr_entries * sizeof(unsigned long));
     new_node -> exec_time = exec_time;
@@ -270,6 +272,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
     if (!curr){ 
         return;
     }
+    pid_t pid = curr-> pid;
 
     unsigned long entries[MAX_STACK_TRACE];
 	unsigned int nr_entries;
@@ -288,7 +291,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
         
-        struct sched_rbentry *old_entry = rbtree_lookup(nr_entries, entries);
+        struct sched_rbentry *old_entry = rbtree_lookup(pid);
         u64 execution_time = 0;
         if (old_entry){
             execution_time = old_entry->exec_time + elapsed;    
@@ -296,7 +299,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         }
         execution_time = elapsed;
         
-        rbtree_insert(nr_entries, entries, execution_time, stack_hash);
+        rbtree_insert(nr_entries, entries, execution_time, stack_hash, pid);
     }
     prev_task = curr;
     prev_timestamp = now;
