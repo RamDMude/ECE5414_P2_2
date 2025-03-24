@@ -208,13 +208,11 @@ static struct sched_rbentry *rbtree_lookup(pid_t pid) {
 }
 
 static void rbtree_insert(struct sched_rbentry *entry) {
-    struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
+    struct rb_node **link = &(sched_rbtree.rb_node), *parent = NULL;
 
     if (!entry){
         return;
     }
-    
-
     
     while (*link) {
         struct sched_rbentry *temp = container_of(*link, struct sched_rbentry, node);
@@ -238,10 +236,10 @@ static void rbtree_insert(struct sched_rbentry *entry) {
 
 static void rbtree_remove(struct sched_rbentry *entry) {
     
-    spin_lock(&sched_rbtree_lock);
-    rb_erase(&entry->node, &sched_rbtree);
-    kfree(entry);
-    spin_unlock(&sched_rbtree_lock);
+    if (entry){
+        rb_erase(&entry->node, &sched_rbtree);
+    }
+    
 }
 
 static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
@@ -272,8 +270,15 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         if (!new_entry)
             return;
 
-        struct sched_rbentry *old_entry = rbtree_lookup(pid);
-
+        struct sched_rbentry *old_entry = kmalloc(sizeof(struct sched_rbentry), GFP_KERNEL);
+        struct rb_node *temp;
+        for(temp= rb_first(&sched_rbtree); temp; temp= rb_next(temp)){
+            struct sched_rbentry *entry = container_of(temp, struct sched_rbentry, node);
+            if (entry->pid == pid){
+                old_entry= entry;
+            }
+	    }
+        
         if (old_entry){
             new_entry-> exec_time = old_entry->exec_time + elapsed;    
             rbtree_remove(old_entry);
