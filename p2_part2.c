@@ -206,7 +206,7 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
     //     }
 
     //     if (cmp < 0)
-    //         node = node->rb_right;
+    //         node = node->rb_right;entries
     //     else
     //         node = node->rb_left;
     // }
@@ -223,21 +223,30 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
     return NULL;
 }
 
-static void rbtree_insert(struct sched_rbentry *new_entry) {
+static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, unsigned long exec_time, unsigned int stack_hash) {
     struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
+    struct sched_rbentry *new_node = kmalloc(sizeof(struct sched_rbentry ), GFP_KERNEL);
+
+    if (!new_node){
+        return;
+    }
+    new_node -> nr_entries = nr_entries;
+    memcpy(new_node->stack_entries, entries, nr_entries * sizeof(unsigned long));
+    new_node -> exec_time = exec_time;
+    new_node -> stack_hash = stack_hash;
 
     spin_lock(&sched_rbtree_lock);
     while (*link) {
         struct sched_rbentry *entry = container_of(*link, struct sched_rbentry, node);
         parent = *link;
 
-        if (new_entry->exec_time < entry->exec_time)
+        if (new_node->exec_time < entry->exec_time)
             link = &(*link)->rb_left;
-        else if (new_entry->exec_time > entry->exec_time)
+        else if (new_node->exec_time > entry->exec_time)
             link = &(*link)->rb_right;
-        else if (new_entry->stack_hash < entry->stack_hash)
+        else if (new_node->stack_hash < entry->stack_hash)
             link = &(*link)->rb_left;
-        else if (new_entry->stack_hash > entry->stack_hash)
+        else if (new_node->stack_hash > entry->stack_hash)
             link = &(*link)->rb_right;
         else {
             spin_unlock(&sched_rbtree_lock);
@@ -245,8 +254,8 @@ static void rbtree_insert(struct sched_rbentry *new_entry) {
         }
     }
 
-    rb_link_node(&new_entry->node, parent, link);
-    rb_insert_color(&new_entry->node, &sched_rbtree);
+    rb_link_node(&new_node->node, parent, link);
+    rb_insert_color(&new_node->node, &sched_rbtree);
     spin_unlock(&sched_rbtree_lock);
     return;
 }
@@ -282,21 +291,16 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
-        struct sched_rbentry *new_entry = kmalloc(sizeof(*new_entry), GFP_KERNEL);
-        if (!new_entry)
-            return;
-
+        
         struct sched_rbentry *old_entry = rbtree_lookup(nr_entries, entries);
+        u64 execution_time = 0;
         if (old_entry){
-            new_entry->exec_time = old_entry->exec_time + elapsed;    
+            execution_time = old_entry->exec_time + elapsed;    
             rbtree_remove(old_entry);
         }
-        new_entry->exec_time = elapsed;
-        new_entry->stack_hash = stack_hash;
-        memcpy(new_entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
-        new_entry->nr_entries = nr_entries;
+        execution_time = elapsed;
         
-        rbtree_insert(new_entry);
+        rbtree_insert(nr_entries, entries, execution_time, stack_hash);
     }
     prev_task = curr;
     prev_timestamp = now;
