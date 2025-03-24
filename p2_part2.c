@@ -195,32 +195,18 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
 static struct task_struct *prev_task = NULL;
 static u64 prev_timestamp = 0;
 
-static struct sched_rbentry *rbtree_lookup(pid_t pid) {
+static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
     struct rb_node *node = sched_rbtree.rb_node;
-
-    // while (node) {
-    //     struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-    //     int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
-
-    //     if (entry->nr_entries == nr_entries && cmp == 0) {
-    //         return entry;
-    //     }
-
-    //     if (cmp < 0)
-    //         node = node->rb_right;entries
-    //     else
-    //         node = node->rb_left;
-    // }
-
-    spin_lock(&sched_rbtree_lock);
-
-    for (node = rb_first(&sched_rbtree); node; node= rb_next(node)){
+    
+    while (node) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        if (entry->pid == pid){
+        int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
+
+        if (entry->nr_entries == nr_entries && cmp == 0) {
             return entry;
         }
+        node = (cmp < 0) ? node->rb_right : node->rb_left;
     }
-    spin_unlock(&sched_rbtree_lock);
     return NULL;
 }
 
@@ -241,15 +227,15 @@ static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, u64 e
     while (*link) {
         struct sched_rbentry *entry = container_of(*link, struct sched_rbentry, node);
         parent = *link;
-
+    
         if (exec_time < entry->exec_time)
             link = &((*link)->rb_left);
         else if (exec_time > entry->exec_time)
             link = &((*link)->rb_right);
-        else {
-            spin_unlock(&sched_rbtree_lock);
-            return; // Duplicate entry, do not insert
-        }
+        else if (stack_hash < entry->stack_hash)
+            link = &((*link)->rb_left);
+        else
+            link = &((*link)->rb_right);
     }
 
     rb_link_node(&new_node->node, parent, link);
@@ -291,7 +277,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
         
-        struct sched_rbentry *old_entry = rbtree_lookup(pid);
+        struct sched_rbentry *old_entry = rbtree_lookup(nr_entries, entries);
         u64 execution_time = 0;
         if (old_entry){
             execution_time = old_entry->exec_time + elapsed;    
