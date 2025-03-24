@@ -195,18 +195,15 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
 static struct task_struct *prev_task = NULL;
 static u64 prev_timestamp = 0;
 
-static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
-    struct rb_node *node = sched_rbtree.rb_node;
-    
-    while (node) {
-        struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
+static struct sched_rbentry *rbtree_lookup(pid_t pid) {
 
-        if (entry->nr_entries == nr_entries && cmp == 0) {
+    struct rb_node *temp;
+    for(temp= rb_first(&sched_rbtree); temp; temp= rb_next(temp)){
+        struct sched_rbentry *entry = container_of(temp, struct sched_rbentry, node);
+		if (entry->pid == pid){
             return entry;
         }
-        node = (cmp < 0) ? node->rb_right : node->rb_left;
-    }
+	}
     return NULL;
 }
 
@@ -274,7 +271,7 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         if (!new_entry)
             return;
 
-        struct sched_rbentry *old_entry = rbtree_lookup(nr_entries, entries);
+        struct sched_rbentry *old_entry = rbtree_lookup(pid);
 
         if (old_entry){
             new_entry-> exec_time = old_entry->exec_time + elapsed;    
