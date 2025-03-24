@@ -238,6 +238,7 @@ static void rbtree_remove(struct sched_rbentry *entry) {
     
     if (entry){
         rb_erase(&entry->node, &sched_rbtree);
+        kfree(entry);
     }
     
 }
@@ -270,24 +271,26 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
         if (!new_entry)
             return;
 
-        struct sched_rbentry *old_entry = kmalloc(sizeof(struct sched_rbentry), GFP_KERNEL);
+        new_entry -> exec_time = elapsed;
+        struct sched_rbentry *old_entry = NULL;
+
         struct rb_node *temp;
         for(temp= rb_first(&sched_rbtree); temp; temp= rb_next(temp)){
             struct sched_rbentry *entry = container_of(temp, struct sched_rbentry, node);
             if (entry->pid == pid){
-                old_entry= entry;
+                old_entry = entry;
+                break;
             }
 	    }
-        
         if (old_entry){
             new_entry-> exec_time = old_entry->exec_time + elapsed;    
-            rbtree_remove(old_entry);
+            rb_erase(&old_entry->node, &sched_rbtree);
         }
 
         new_entry -> pid = pid;
         new_entry -> nr_entries = nr_entries;
         memcpy(new_entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
-        new_entry -> exec_time += elapsed;
+        
         new_entry -> stack_hash = stack_hash;
         rbtree_insert(new_entry);
     }
