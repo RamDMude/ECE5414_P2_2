@@ -218,7 +218,7 @@ static void rbtree_insert(struct sched_rbentry *entry) {
     }
     
 
-    spin_lock(&sched_rbtree_lock);
+    
     while (*link) {
         struct sched_rbentry *temp = container_of(*link, struct sched_rbentry, node);
         parent = *link;
@@ -235,14 +235,13 @@ static void rbtree_insert(struct sched_rbentry *entry) {
 
     rb_link_node(&entry->node, parent, link);
     rb_insert_color(&entry->node, &sched_rbtree);
-    spin_unlock(&sched_rbtree_lock);
+    
     return;
 }
 
 static void rbtree_remove(struct sched_rbentry *entry) {
-    spin_lock(&sched_rbtree_lock);
+    
     rb_erase(&entry->node, &sched_rbtree);
-    spin_unlock(&sched_rbtree_lock);
     kfree(entry);
     return;
 }
@@ -300,7 +299,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
     int count = 0;
     
     seq_puts(m, "Rank\tJenkins Hash\tTotal CPU Time (ns)\tStack Trace\n");
-    spin_lock(&sched_rbtree_lock);
+    
     for (node = rb_last(&sched_rbtree); node && (count < MAX_TOP_TASKS); node = rb_prev(node), count++) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
         seq_printf(m, "%d\t%u\t%llu\t", count + 1, entry->stack_hash, entry->exec_time);
@@ -308,7 +307,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
             seq_printf(m, "%pS ", (void *)entry->stack_entries[i]);
         seq_puts(m, "\n");
     }
-    spin_unlock(&sched_rbtree_lock);
+    
     return 0;
 }
 
@@ -329,15 +328,13 @@ static void cleanup_sched_htable(void) {
 }
 #elif (P2_PART2 == 3)
 static void cleanup_rbtree(void) {
-    struct rb_node *node, *next;
-    spin_lock(&sched_rbtree_lock);
-    for (node = rb_first(&sched_rbtree); node; node = next) {
-        struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        next = rb_next(node);
-        rb_erase(node, &sched_rbtree);
-        kfree(entry);
-    }
-    spin_unlock(&sched_rbtree_lock);
+
+    struct rb_node *node;
+	while ((node = rb_first(&sched_rbtree))) {
+		struct sched_rbentry *entry = rb_entry(node, struct sched_rbentry, node);
+		rb_erase(node, &sched_rbtree);
+		kfree(entry);
+	}
 }
 #endif
 
