@@ -193,33 +193,45 @@ static struct task_struct *prev_task = NULL;
 static u64 prev_timestamp = 0;
 
 static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
-    
     struct rb_node *node = sched_rbtree.rb_node;
 
-    while (node){
+    while (node) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        if (entry->nr_entries == nr_entries &&
-            !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))) {
+        int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
+
+        if (entry->nr_entries == nr_entries && cmp == 0) {
             return entry;
         }
-        node = rb_next(node);
+
+        if (cmp < 0)
+            node = node->rb_right;
+        else
+            node = node->rb_left;
     }
     return NULL;
 }
 
 static void rbtree_insert(struct sched_rbentry *new_entry) {
     struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
+
     while (*link) {
         struct sched_rbentry *entry = container_of(*link, struct sched_rbentry, node);
         parent = *link;
+
         if (new_entry->exec_time < entry->exec_time)
             link = &(*link)->rb_left;
-        else
+        else if (new_entry->exec_time > entry->exec_time)
             link = &(*link)->rb_right;
+        else if (new_entry->stack_hash < entry->stack_hash)
+            link = &(*link)->rb_left;
+        else if (new_entry->stack_hash > entry->stack_hash)
+            link = &(*link)->rb_right;
+        else
+            return; // Duplicate entry, do not insert
     }
+
     rb_link_node(&new_entry->node, parent, link);
     rb_insert_color(&new_entry->node, &sched_rbtree);
-    return;
 }
 
 static void rbtree_remove(struct sched_rbentry *entry) {
@@ -231,7 +243,9 @@ static void rbtree_remove(struct sched_rbentry *entry) {
 static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
 {
     struct task_struct *curr = (struct task_struct *)regs->si;
-    if (!curr) return;
+    if (!curr){ 
+        return;
+    }
 
     unsigned long entries[MAX_STACK_TRACE];
 	unsigned int nr_entries;
@@ -240,11 +254,13 @@ static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsi
     if (prev_task && prev_timestamp){
         u64 elapsed = now - prev_timestamp;
     
-        if (user_mode(regs))
+        if (user_mode(regs)){
             nr_entries = stack_trace_save_user(entries, MAX_STACK_TRACE);
-        else
+        }
+        else{
             nr_entries = stack_trace_save(entries, MAX_STACK_TRACE, 0 );
-
+        }
+        
         u32 stack_hash = jhash(entries, nr_entries * sizeof(unsigned long), 0);
 
         struct sched_rbentry *new_entry = kmalloc(sizeof(*new_entry), GFP_KERNEL);
@@ -274,7 +290,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
     int count = 0;
     
     seq_puts(m, "Rank\tJenkins Hash\tTotal CPU Time (ns)\tStack Trace\n");
-    for (node = rb_last(&sched_rbtree); node && count < MAX_TOP_TASKS; node = rb_prev(node), count++) {
+    for (node = rb_last(&sched_rbtree); node && (count < MAX_TOP_TASKS); node = rb_prev(node), count++) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
         seq_printf(m, "%d\t%u\t%llu\t", count + 1, entry->stack_hash, entry->exec_time);
         for (int i = 0; i < min(entry->nr_entries, MAX_DEPTH); i++)
@@ -314,7 +330,6 @@ static void cleanup_rbtree(void) {
 
 static int lkp25_p2_proc_open(struct inode *inode, struct file *file)
 {
-	// printk(KERN_INFO "Perftop Opened");
 	return single_open(file, lkp25_p2_proc_show, NULL);
 }
 
