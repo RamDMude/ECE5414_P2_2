@@ -208,6 +208,13 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
         else
             node = node->rb_left;
     }
+
+    for (node = rb_first(&sched_rbtree); node; node= rb_next(node)){
+        struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
+        if (entry->nr_entries == nr_entries && !memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long))){
+            return entry;
+        }
+    }
     return NULL;
 }
 
