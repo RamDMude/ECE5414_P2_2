@@ -238,9 +238,10 @@ static void rbtree_insert(struct sched_rbentry *entry) {
 
 static void rbtree_remove(struct sched_rbentry *entry) {
     
+    spin_lock(&sched_rbtree_lock);
     rb_erase(&entry->node, &sched_rbtree);
     kfree(entry);
-    return;
+    spin_unlock(&sched_rbtree_lock);
 }
 
 static void __kprobes handler_post2(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
