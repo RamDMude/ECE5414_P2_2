@@ -49,6 +49,8 @@ struct sched_hentry {
 };
 
 #elif (P2_PART2 == 3)
+static DEFINE_SPINLOCK(sched_rbtree_lock);
+
 struct sched_rbentry {
     struct rb_node node;
     u64 exec_time;
@@ -195,19 +197,21 @@ static u64 prev_timestamp = 0;
 static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned long *entries) {
     struct rb_node *node = sched_rbtree.rb_node;
 
-    while (node) {
-        struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
-        int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
+    // while (node) {
+    //     struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
+    //     int cmp = memcmp(entry->stack_entries, entries, nr_entries * sizeof(unsigned long));
 
-        if (entry->nr_entries == nr_entries && cmp == 0) {
-            return entry;
-        }
+    //     if (entry->nr_entries == nr_entries && cmp == 0) {
+    //         return entry;
+    //     }
 
-        if (cmp < 0)
-            node = node->rb_right;
-        else
-            node = node->rb_left;
-    }
+    //     if (cmp < 0)
+    //         node = node->rb_right;
+    //     else
+    //         node = node->rb_left;
+    // }
+
+    spin_lock(&sched_rbtree_lock);
 
     for (node = rb_first(&sched_rbtree); node; node= rb_next(node)){
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
@@ -215,12 +219,14 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
             return entry;
         }
     }
+    spin_unlock(&sched_rbtree_lock);
     return NULL;
 }
 
 static void rbtree_insert(struct sched_rbentry *new_entry) {
     struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
 
+    spin_lock(&sched_rbtree_lock);
     while (*link) {
         struct sched_rbentry *entry = container_of(*link, struct sched_rbentry, node);
         parent = *link;
@@ -233,16 +239,22 @@ static void rbtree_insert(struct sched_rbentry *new_entry) {
             link = &(*link)->rb_left;
         else if (new_entry->stack_hash > entry->stack_hash)
             link = &(*link)->rb_right;
-        else
+        else {
+            spin_unlock(&sched_rbtree_lock);
             return; // Duplicate entry, do not insert
+        }
     }
 
     rb_link_node(&new_entry->node, parent, link);
     rb_insert_color(&new_entry->node, &sched_rbtree);
+    spin_unlock(&sched_rbtree_lock);
+    return;
 }
 
 static void rbtree_remove(struct sched_rbentry *entry) {
+    spin_lock(&sched_rbtree_lock);
     rb_erase(&entry->node, &sched_rbtree);
+    spin_unlock(&sched_rbtree_lock);
     kfree(entry);
     return;
 }
@@ -297,6 +309,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
     int count = 0;
     
     seq_puts(m, "Rank\tJenkins Hash\tTotal CPU Time (ns)\tStack Trace\n");
+    spin_lock(&sched_rbtree_lock);
     for (node = rb_last(&sched_rbtree); node && (count < MAX_TOP_TASKS); node = rb_prev(node), count++) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
         seq_printf(m, "%d\t%u\t%llu\t", count + 1, entry->stack_hash, entry->exec_time);
@@ -304,7 +317,7 @@ static int lkp25_p2_proc_show(struct seq_file *m, void *v)
             seq_printf(m, "%pS ", (void *)entry->stack_entries[i]);
         seq_puts(m, "\n");
     }
-
+    spin_unlock(&sched_rbtree_lock);
     return 0;
 }
 
@@ -326,12 +339,14 @@ static void cleanup_sched_htable(void) {
 #elif (P2_PART2 == 3)
 static void cleanup_rbtree(void) {
     struct rb_node *node, *next;
+    spin_lock(&sched_rbtree_lock);
     for (node = rb_first(&sched_rbtree); node; node = next) {
         struct sched_rbentry *entry = container_of(node, struct sched_rbentry, node);
         next = rb_next(node);
         rb_erase(node, &sched_rbtree);
         kfree(entry);
     }
+    spin_unlock(&sched_rbtree_lock);
 }
 #endif
 
