@@ -31,6 +31,7 @@ extern unsigned int stack_trace_save_user(unsigned long *store, unsigned int siz
 #define MAX_TOP_TASKS 20
 static DEFINE_HASHTABLE(sched_htable, MY_HASH_TABLE_BINS);
 
+static struct rb_root sched_rbtree = RB_ROOT;
 
 #if (P2_PART2 == 1)
 struct sched_hentry {
@@ -60,7 +61,6 @@ struct sched_rbentry {
 };
 #endif
 
-static struct rb_root sched_rbtree = RB_ROOT;
 
 static char symbol2[KSYM_NAME_LEN] = "pick_next_task_fair";
 module_param_string(symbol2, symbol2, KSYM_NAME_LEN, 0644);
@@ -223,7 +223,7 @@ static struct sched_rbentry *rbtree_lookup(unsigned int nr_entries, unsigned lon
     return NULL;
 }
 
-static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, unsigned long exec_time, unsigned int stack_hash) {
+static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, u64 exec_time, u32 stack_hash) {
     struct rb_node **link = &sched_rbtree.rb_node, *parent = NULL;
     struct sched_rbentry *new_node = kmalloc(sizeof(struct sched_rbentry ), GFP_KERNEL);
 
@@ -240,14 +240,10 @@ static void rbtree_insert(unsigned int nr_entries, unsigned long *entries, unsig
         struct sched_rbentry *entry = container_of(*link, struct sched_rbentry, node);
         parent = *link;
 
-        if (new_node->exec_time < entry->exec_time)
-            link = &(*link)->rb_left;
-        else if (new_node->exec_time > entry->exec_time)
-            link = &(*link)->rb_right;
-        else if (new_node->stack_hash < entry->stack_hash)
-            link = &(*link)->rb_left;
-        else if (new_node->stack_hash > entry->stack_hash)
-            link = &(*link)->rb_right;
+        if (exec_time < entry->exec_time)
+            link = &((*link)->rb_left);
+        else if (exec_time > entry->exec_time)
+            link = &((*link)->rb_right);
         else {
             spin_unlock(&sched_rbtree_lock);
             return; // Duplicate entry, do not insert
